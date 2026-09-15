@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>早八签到</title>
+  <link rel="stylesheet" href="/vendor/vant.min.css">
+  <link rel="stylesheet" href="/vendor/leaflet.min.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f7f8fa; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    #app { max-width: 520px; margin: 0 auto; min-height: 100vh; background: #f7f8fa; }
+    .content { padding: 12px 12px 70px; }
+    .task-card { background: #fff; border-radius: 10px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
+    .task-card.deadline { border: 1px solid #ff976a; }
+    .task-card.done { opacity: .55; }
+    .task-title { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+    .task-sub { color: #969799; font-size: 12px; margin-top: 4px; }
+    .task-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+    .countdown { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .countdown.warn { color: #ff976a; }
+    .muted { color: #969799; font-size: 12px; }
+    .login-page { padding: 60px 24px; }
+    .logo { text-align: center; font-size: 26px; font-weight: 700; margin-bottom: 40px; color: #1989fa; }
+    .reg-link { text-align: center; margin-top: 16px; color: #1989fa; font-size: 14px; }
+    .greet { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
+    .section-title { font-size: 14px; color: #969799; margin: 16px 0 8px; }
+    .tag-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+    .stat-box { background: #fff; border-radius: 10px; padding: 12px 6px; text-align: center; }
+    .stat-num { font-size: 20px; font-weight: 700; }
+    .stat-label { font-size: 12px; color: #969799; margin-top: 2px; }
+    .appeal-item, .leave-item { background: #fff; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+    .list-head { font-weight: 600; font-size: 15px; }
+    .invite-code { font-size: 22px; font-weight: 700; letter-spacing: 4px; color: #1989fa; text-align: center; padding: 12px 0; }
+    #map { height: 220px; border-radius: 10px; z-index: 1; }
+    .map-wrap { position: relative; }
+    .center-pin { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-100%); z-index: 500; font-size: 22px; pointer-events: none; }
+    .radius-pill { display: flex; gap: 8px; margin-top: 8px; }
+    .pill { padding: 6px 14px; border-radius: 14px; background: #f2f3f5; font-size: 13px; cursor: pointer; }
+    .pill.active { background: #1989fa; color: #fff; }
+    .loc-status { text-align: center; padding: 24px 12px; background: #fff; border-radius: 10px; }
+    .loc-dist { font-size: 30px; font-weight: 700; margin: 8px 0; }
+    .course-card { background: #fff; border-radius: 10px; padding: 14px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+    .course-name { font-size: 16px; font-weight: 600; }
+    .my-center { text-align: center; padding: 30px 12px; background: #fff; border-radius: 10px; }
+    .avatar { width: 64px; height: 64px; border-radius: 50%; background: #1989fa; color: #fff; font-size: 26px; line-height: 64px; margin: 0 auto 10px; }
+    .overlay-page { position: fixed; inset: 0; background: #f7f8fa; z-index: 100; max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; }
+    .overlay-body { flex: 1; overflow-y: auto; padding: 12px; }
+    .sign-success { text-align: center; padding: 40px 0; }
+    .rate-ring { width: 72px; height: 72px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px; margin: 0 auto; }
+    .login-input { width: 100%; height: 48px; border: 1px solid #ebedf0; border-radius: 10px; padding: 0 14px; font-size: 16px; margin-bottom: 12px; outline: none; background: #fff; display: block; box-sizing: border-box; }
+    .login-input:focus { border-color: #1989fa; }
+    .login-btn { width: 100%; height: 46px; border: none; border-radius: 10px; background: #1989fa; color: #fff; font-size: 16px; cursor: pointer; }
+    .login-btn:disabled { opacity: .6; cursor: not-allowed; }
+    .form-label { font-size: 13px; color: #969799; margin: 12px 2px 6px; }
+    .form-cell { background: #fff; border-radius: 10px; padding: 14px; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <!-- 登录页 -->
+  <div v-if="!user" class="login-page">
+    <div class="logo">⏰ 早八签到</div>
+    <input class="login-input" v-model="loginForm.account" placeholder="账号(学号 / 工号)" autocomplete="username" />
+    <input class="login-input" type="password" v-model="loginForm.password" placeholder="密码" autocomplete="current-password" @keyup.enter="doLogin" />
+    <button class="login-btn" :disabled="loginLoading" @click="doLogin">{{ loginLoading ? '登录中…' : '登 录' }}</button>
+    <div class="reg-link" @click="showRegister = true">没有账号?注册</div>
+    <div class="muted" style="text-align:center;margin-top:24px;">演示账号:教师 t001 / 学生 s001-s010,密码均为 123456</div>
+  </div>
+
+  <!-- 注册弹窗 -->
+  <van-popup v-model:show="showRegister" position="bottom" round :style="{ maxHeight: '85%', overflowY: 'auto' }">
+    <div style="padding: 16px;">
+      <h3 style="margin: 8px 0 16px;">注册</h3>
+      <input class="login-input" v-model="regForm.account" placeholder="账号(学号/工号)" />
+      <input class="login-input" v-model="regForm.name" placeholder="姓名" />
+      <input class="login-input" type="password" v-model="regForm.password" placeholder="密码(至少 6 位)" />
+      <input class="login-input" type="password" v-model="regForm.confirm" placeholder="确认密码" />
+      <div style="display:flex;align-items:center;gap:12px;margin:4px 0 12px;">
+        <span>身份:</span>
+        <van-radio-group v-model="regForm.role" direction="horizontal">
+          <van-radio name="student">学生</van-radio>
+          <van-radio name="teacher">教师</van-radio>
+        </van-radio-group>
+      </div>
+      <button class="login-btn" :disabled="loginLoading" @click="doRegister">注 册</button>
+    </div>
+  </van-popup>
+
+  <!-- 主界面 -->
+  <div v-if="user">
+    <!-- ========== 学生端 ========== -->
+    <div v-if="user.role === 'student'">
+      <van-nav-bar :title="stuNavTitle" fixed placeholder right-text="退出" @click-right="logout" ></van-nav-bar>
+      <div class="content" style="padding-top: 12px;">
+        <!-- 首页 -->
+        <div v-show="activeTab === 'home'">
+          <div class="greet">{{ greet }} ,{{ user.name }}</div>
+          <div class="muted">{{ today }}</div>
+          <van-notice-bar v-if="appealAvailable.length" left-icon="warning-o" scrollable text="你有缺勤可在 24 小时内申请补签" @click="openAppealList" ></van-notice-bar>
+          <div class="section-title">进行中签到</div>
+          <van-empty v-if="!activeTasks.length" description="当前没有进行中的签到" image-size="80" ></van-empty>
+          <task-card v-for="t in activeTasks" :key="t.id" :task="t" @sign="openSign(t)" @appeal="openAppealApply(t)" ></task-card>
+          <div class="section-title">我的课程</div>
+          <div v-for="c in myCourses" :key="c.id" class="course-card" @click="openCourseDetail(c)">
+            <div>
+              <div class="course-name">{{ c.name }}</div>
+              <div class="muted">{{ c.teacher_name }}</div>
+            </div>
+            <van-icon name="arrow" color="#c8c9cc" ></van-icon>
+          </div>
+        </div>
+
+        <!-- 课程 Tab -->
+        <div v-show="activeTab === 'courses'">
+          <div style="margin-bottom: 12px;">
+            <van-button block type="primary" @click="showJoinPopup = true">+ 输入邀请码加入课程</van-button>
+          </div>
+          <van-empty v-if="!myCourses.length" description="还没有加入任何课程" image-size="80" ></van-empty>
+          <div v-for="c in myCourses" :key="c.id" class="course-card" @click="openCourseDetail(c)">
+            <div>
+              <div class="course-name">{{ c.name }}</div>
+              <div class="muted">{{ c.teacher_name }}</div>
+            </div>
+            <van-icon name="arrow" color="#c8c9cc" ></van-icon>
+          </div>
+        </div>
+
+        <!-- 我的申请 Tab -->
+        <div v-show="activeTab === 'applies'">
+          <van-tabs v-model:active="applyTab">
+            <van-tab title="补签申请">
+              <div style="padding-top: 12px;" v-if="myAppeals.length">
+                <div v-for="a in myAppeals" :key="a.id" class="appeal-item">
+                  <div class="list-head">{{ a.course_name }} · {{ fmtTime(a.start_time) }}</div>
+                  <div class="muted" style="margin: 4px 0;">理由:{{ a.reason }}</div>
+                  <div class="tag-row">
+                    <van-tag :color="statusColor(a.status)" round>{{ statusText(a.status) }}</van-tag>
+                    <span v-if="a.teacher_comment" class="muted">教师意见:{{ a.teacher_comment }}</span>
+                  </div>
+                </div>
+              </div>
+              <van-empty v-else description="暂无补签申请" image-size="80" ></van-empty>
+            </van-tab>
+            <van-tab title="请假申请">
+              <div style="padding-top: 12px;" v-if="myLeaves.length">
+                <div v-for="l in myLeaves" :key="l.id" class="leave-item">
+                  <div class="list-head">{{ l.course_name }} · {{ l.leave_type === 'sick' ? '病假' : l.leave_type === 'personal' ? '事假' : '其他' }}</div>
+                  <div class="muted" style="margin: 4px 0;">{{ fmtTime(l.start_time) }} ~ {{ fmtTime(l.end_time) }}</div>
+                  <div class="muted" style="margin: 4px 0;">理由:{{ l.reason }}</div>
+                  <div class="tag-row">
+                    <van-tag :color="statusColor(l.status)" round>{{ statusText(l.status) }}</van-tag>
+                    <span v-if="l.teacher_comment" class="muted">教师意见:{{ l.teacher_comment }}</span>
+                  </div>
+                </div>
+              </div>
+              <van-empty v-else description="暂无请假申请" image-size="80" ></van-empty>
+            </van-tab>
+          </van-tabs>
+        </div>
+
+        <!-- 我的 Tab -->
+        <div v-show="activeTab === 'me'">
+          <div class="my-center">
+            <div class="avatar">{{ user.name[0] }}</div>
+            <div style="font-size:18px;font-weight:700;">{{ user.name }}</div>
+            <div class="muted">{{ user.account }} · 学生</div>
+          </div>
+          <div style="margin: 16px;">
+            <button class="login-btn" style="background:#ee0a24;" @click="logout">退出登录</button>
+          </div>
+        </div>
+      </div>
+      <van-tabbar v-model="activeTab" fixed placeholder>
+        <van-tabbar-item name="home" icon="home-o">首页</van-tabbar-item>
+        <van-tabbar-item name="courses" icon="bookmark-o">课程</van-tabbar-item>
+        <van-tabbar-item name="applies" icon="orders-o">我的申请</van-tabbar-item>
+        <van-tabbar-item name="me" icon="user-o">我的</van-tabbar-item>
+      </van-tabbar>
+    </div>
+
+    <!-- ========== 教师端 ========== -->
+    <div v-else>
+      <van-nav-bar :title="teaNavTitle" fixed placeholder right-text="退出" @click-right="logout" ></van-nav-bar>
+      <div class="content" style="padding-top: 12px;">
+        <!-- 首页 -->
+        <div v-show="activeTab === 'home'">
+          <div class="greet">{{ greet }},{{ user.name }}</div>
+          <div class="muted">{{ today }}</div>
+          <div style="margin: 12px 0;">
+            <van-button block type="primary" size="large" icon="plus" @click="openCreateTask">发 起 签 到</van-button>
+          </div>
+          <div class="section-title">进行中签到</div>
+          <van-empty v-if="!teaActiveTasks.length" description="今天还没有进行中的签到" image-size="80" ></van-empty>
+          <div v-for="t in teaActiveTasks" :key="t.id" class="task-card" @click="openTaskManage(t)">
+            <div class="task-title">{{ t.course_name }} {{ t.type === 'code' ? '🔢' : '📍' }}</div>
+            <div class="task-sub">签到码 {{ t.code }} · 截止 {{ fmtTime(t.end_time) }}</div>
+            <div class="task-foot">
+              <span class="countdown" :class="{ warn: remaining(t.end_time) <= 900000 }">{{ fmtCountdown(t.end_time) }}</span>
+              <van-button size="small" type="primary" plain>查看名单</van-button>
+            </div>
+          </div>
+          <div class="section-title">我的课程</div>
+          <div v-for="c in myCourses" :key="c.id" class="course-card" @click="openCourseDetail(c)">
+            <div>
+              <div class="course-name">{{ c.name }}</div>
+              <div class="muted">邀请码 {{ c.invite_code }} · {{ c.student_count }} 人</div>
+            </div>
+            <van-icon name="arrow" color="#c8c9cc" ></van-icon>
+          </div>
+        </div>
+
+        <!-- 课程 Tab -->
+        <div v-show="activeTab === 'courses'">
+          <div style="margin-bottom: 12px;">
+            <van-button block type="primary" @click="showCreateCourse = true">+ 创建课程</van-button>
+          </div>
+          <div v-for="c in myCourses" :key="c.id" class="course-card" @click="openCourseDetail(c)">
+            <div>
+              <div class="course-name">{{ c.name }}</div>
+              <div class="muted">邀请码 {{ c.invite_code }} · {{ c.student_count }} 人</div>
+            </div>
+            <van-button size="mini" plain type="primary" @click.stop="copyCode(c.invite_code)">复制</van-button>
+          </div>
+        </div>
+
+        <!-- 审批 Tab -->
+        <div v-show="activeTab === 'approvals'">
+          <van-tabs v-model:active="approvalTab">
+            <van-tab :title="`待审批 (${pendingList.length})`">
+              <div style="padding-top: 12px;" v-if="pendingList.length">
+                <div v-for="item in pendingList" :key="item.kind + item.id" class="appeal-item" @click="openApprovalDetail(item)">
+                  <div class="list-head">
+                    <van-tag :color="item.kind === 'appeal' ? '#ff976a' : '#1989fa'" round>{{ item.kind === 'appeal' ? '补签' : '请假' }}</van-tag>
+                    {{ item.student_name }} ({{ item.account }})
+                  </div>
+                  <div class="muted" style="margin: 4px 0;">{{ item.course_name }} · {{ item.kind === 'appeal' ? fmtTime(item.start_time) : fmtTime(item.start_time) + ' ~ ' + fmtTime(item.end_time) }}</div>
+                  <div class="muted">理由:{{ item.reason }}</div>
+                </div>
+              </div>
+              <van-empty v-else description="没有待审批的申请 🎉" image-size="80" ></van-empty>
+            </van-tab>
+            <van-tab title="已审批">
+              <div style="padding-top: 12px;" v-if="doneList.length">
+                <div v-for="item in doneList" :key="item.kind + item.id" class="appeal-item">
+                  <div class="list-head">
+                    <van-tag :color="item.kind === 'appeal' ? '#ff976a' : '#1989fa'" round>{{ item.kind === 'appeal' ? '补签' : '请假' }}</van-tag>
+                    {{ item.student_name }} ({{ item.account }})
+                  </div>
+                  <div class="muted" style="margin: 4px 0;">{{ item.course_name }} · 理由:{{ item.reason }}</div>
+                  <div class="tag-row">
+                    <van-tag :color="item.status === 'approved' ? '#00c8c8' : '#ee0a24'" round>{{ item.status === 'approved' ? '通过' : '拒绝' }}</van-tag>
+                    <span v-if="item.teacher_comment" class="muted">{{ item.teacher_comment }}</span>
+                  </div>
+                </div>
+              </div>
+              <van-empty v-else description="暂无已审批记录" image-size="80" ></van-empty>
+            </van-tab>
+          </van-tabs>
+        </div>
+
+        <!-- 我的 Tab -->
+        <div v-show="activeTab === 'me'">
+          <div class="my-center">
+            <div class="avatar">{{ user.name[0] }}</div>
+            <div style="font-size:18px;font-weight:700;">{{ user.name }}</div>
+            <div class="muted">{{ user.account }} · 教师 · {{ myCourses.length }} 门课</div>
+          </div>
+          <div style="margin: 16px;">
+            <button class="login-btn" style="background:#ee0a24;" @click="logout">退出登录</button>
+          </div>
+        </div>
+      </div>
+      <van-tabbar v-model="activeTab" fixed placeholder>
+        <van-tabbar-item name="home" icon="home-o">首页</van-tabbar-item>
+        <van-tabbar-item name="courses" icon="bookmark-o">课程</van-tabbar-item>
+        <van-tabbar-item name="approvals" icon="notes-o" :badge="pendingList.length || ''">审批</van-tabbar-item>
+        <van-tabbar-item name="me" icon="user-o">我的</van-tabbar-item>
+      </van-tabbar>
+    </div>
+
+    <!-- ===== 覆盖层:加入课程 ===== -->
+    <van-popup v-model:show="showJoinPopup" position="center" round style="width: 80%; padding: 20px;">
+      <h3 style="margin: 0 0 12px;">加入课程</h3>
+      <van-field v-model="joinCode" maxlength="6" placeholder="输入 6 位邀请码" style="border:1px solid #ebedf0;border-radius:8px;" ></van-field>
+      <div style="margin-top: 16px; display: flex; gap: 10px;">
+        <van-button round block @click="showJoinPopup = false">取消</van-button>
+        <van-button round block type="primary" @click="joinCourse">加入</van-button>
+      </div>
+    </van-popup>
+
+    <!-- ===== 覆盖层:创建课程 ===== -->
+    <van-popup v-model:show="showCreateCourse" position="center" round style="width: 80%; padding: 20px;">
+      <h3 style="margin: 0 0 12px;">创建课程</h3>
+      <van-field v-model="newCourseName" placeholder="课程名,如:大学英语" style="border:1px solid #ebedf0;border-radius:8px;" ></van-field>
+      <div style="margin-top: 16px; display: flex; gap: 10px;">
+        <van-button round block @click="showCreateCourse = false">取消</van-button>
+        <van-button round block type="primary" @click="createCourse">创建</van-button>
+      </div>
+    </van-popup>
+
+    <!-- ===== 覆盖层:通用子页面 ===== -->
+    <div v-if="overlay" class="overlay-page">
+      <van-nav-bar :title="overlayTitle" left-arrow fixed placeholder @click-left="closeOverlay" ></van-nav-bar>
+      <div class="overlay-body">
+
+        <!-- 学生签到页 -->
+        <div v-if="overlay === 'sign'" style="padding-top: 20px;">
+          <div class="task-card">
+            <div class="task-title">{{ signTask.course_name }} {{ signTask.type === 'code' ? '🔢 签到码签到' : '📍 定位签到' }}</div>
+            <div class="task-sub">{{ signTask.teacher_name }}</div>
+            <div class="task-foot">
+              <span class="countdown" :class="{ warn: remaining(signTask.end_time) <= 900000 }">{{ fmtCountdown(signTask.end_time) }}</span>
+              <span class="muted">截止 {{ fmtTime(signTask.end_time) }}</span>
+            </div>
+          </div>
+
+          <!-- 码签到 -->
+          <div v-if="signTask.type === 'code'" style="background:#fff;border-radius:10px;padding:20px;">
+            <div class="muted" style="text-align:center;margin-bottom:16px;">请输入老师展示的 6 位签到码</div>
+            <van-password-input :value="signCode" :length="6" :focused="true" @focus="focusCodeInput" ></van-password-input>
+            <input v-model="signCode" type="text" inputmode="numeric" maxlength="6" ref="codeInput"
+              style="position:fixed;opacity:0;pointer-events:none;" @input="signCode = signCode.replace(/\D/g, '').slice(0, 6)" />
+            <div style="margin-top: 20px;">
+              <van-button block type="primary" :loading="signLoading" @click="doSign">签 到</van-button>
+            </div>
+          </div>
+
+          <!-- 定位签到 -->
+          <div v-else class="loc-status">
+            <div class="muted">正在获取你的位置…</div>
+            <div class="loc-dist">{{ locStatus === 'ok' ? Math.round(locDist) + ' 米' : locStatus === 'denied' ? '定位被拒绝' : '定位中…' }}</div>
+            <div v-if="locStatus === 'ok'" :class="locDist <= signTask.radius_m ? 'muted' : 'muted'" style="color:#ee0a24;">
+              {{ locDist <= signTask.radius_m ? '已在签到范围内 ✓' : '距签到点约 ' + Math.round(locDist) + ' 米,请在范围内签到' }}
+            </div>
+            <div class="muted" v-if="locAccuracy > 50">定位精度较低(±{{ Math.round(locAccuracy) }}m),请到开阔处</div>
+            <div style="margin-top: 20px;">
+              <van-button v-if="locStatus === 'denied' || locStatus === 'error'" block @click="startLocate">重试定位</van-button>
+              <van-button v-else block type="primary" :disabled="locStatus !== 'ok' || locDist > signTask.radius_m" :loading="signLoading" @click="doSign">签 到</van-button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 补签申请页 -->
+        <div v-if="overlay === 'appealApply'" style="padding-top: 8px;">
+          <div class="task-card">
+            <div class="task-title">{{ appealTask.course_name }}</div>
+            <div class="task-sub">任务时间 {{ fmtTime(appealTask.end_time) }} · 剩余补签时间 {{ fmtCountdown(appealDeadline) }}</div>
+          </div>
+          <div class="form-label">补签理由</div>
+          <textarea class="login-input" style="height:auto;padding:10px 14px;" v-model="appealReason" rows="3" placeholder="说明缺勤原因(至少 10 字)"></textarea>
+          <div style="margin: 16px 0;">
+            <button class="login-btn" :disabled="submitLoading" @click="submitAppeal">{{ submitLoading ? '提交中…' : '提交申请' }}</button>
+          </div>
+        </div>
+
+        <!-- 请假申请页 -->
+        <div v-if="overlay === 'leaveApply'" style="padding-top: 8px;">
+          <div class="form-label">课程</div>
+          <div class="form-cell" @click="showCoursePicker = true">
+            <span :class="{ muted: !leaveCourseName }">{{ leaveCourseName || '点击选择课程' }}</span>
+            <van-icon name="arrow" color="#c8c9cc" style="float:right;" ></van-icon>
+          </div>
+          <div class="form-label">类型</div>
+          <div class="form-cell">
+            <van-radio-group v-model="leaveForm.leave_type" direction="horizontal">
+              <van-radio name="sick">病假</van-radio>
+              <van-radio name="personal">事假</van-radio>
+              <van-radio name="other">其他</van-radio>
+            </van-radio-group>
+          </div>
+          <div class="form-label">开始时间</div>
+          <input type="datetime-local" v-model="leaveForm.start_time" class="login-input" />
+          <div class="form-label">结束时间</div>
+          <input type="datetime-local" v-model="leaveForm.end_time" class="login-input" />
+          <div class="form-label">理由</div>
+          <textarea class="login-input" style="height:auto;padding:10px 14px;" v-model="leaveForm.reason" rows="3" placeholder="请假理由(至少 10 字)"></textarea>
+          <div style="margin: 16px 0;">
+            <button class="login-btn" :disabled="submitLoading" @click="submitLeave">{{ submitLoading ? '提交中…' : '提交请假' }}</button>
+          </div>
+          <van-popup v-model:show="showCoursePicker" position="bottom" round>
+            <van-picker :columns="coursePickerColumns" @confirm="pickCourse" @cancel="showCoursePicker = false" ></van-picker>
+          </van-popup>
+        </div>
+
+        <!-- 课程详情(学生) -->
+        <div v-if="overlay === 'courseDetail'">
+          <div class="task-card">
+            <div class="task-title">{{ detailCourse.name }}</div>
+            <div class="task-sub">{{ detailCourse.teacher_name }}</div>
+            <div style="margin-top:10px;">
+              <van-button size="small" type="primary" plain @click="openLeaveApply(detailCourse)">申请请假</van-button>
+            </div>
+          </div>
+          <div class="section-title">签到任务</div>
+          <div v-for="t in detailTasks" :key="t.id" class="task-card">
+            <div class="list-head">{{ fmtTime(t.start_time) }} · {{ t.type === 'code' ? '签到码' : '定位' }}</div>
+            <div class="tag-row" style="margin-top:6px;">
+              <van-tag v-if="t.my_status === 'normal'" color="#07c160" round>已签到</van-tag>
+              <van-tag v-else-if="t.my_status === 'leave'" color="#1989fa" round>请假</van-tag>
+              <van-tag v-else-if="t.my_status === 'leave_pending'" color="#ff976a" round>请假审批中</van-tag>
+              <van-tag v-else-if="t.my_status === 'appeal_pending'" color="#ff976a" round>补签待审</van-tag>
+              <van-tag v-else-if="t.my_status === 'appeal_approved'" color="#00c8c8" round>补签通过</van-tag>
+              <van-tag v-else-if="t.my_status === 'appeal_rejected'" color="#ee0a24" round>补签拒绝</van-tag>
+              <van-tag v-else-if="t.my_status === 'absent_can_appeal'" color="#ff976a" round>缺勤·可补签</van-tag>
+              <van-tag v-else-if="t.my_status === 'absent'" color="#ee0a24" round>缺勤</van-tag>
+              <van-tag v-else-if="t.status === 'active'" color="#07c160" round>进行中</van-tag>
+            </div>
+            <div style="margin-top:8px;" v-if="t.my_status === 'absent_can_appeal'">
+              <van-button size="small" type="warning" plain @click="openAppealApplyFromTask(t)">申请补签</van-button>
+            </div>
+          </div>
+          <van-empty v-if="!detailTasks.length" description="还没有签到任务" image-size="80" ></van-empty>
+        </div>
+
+        <!-- 课程详情(教师):任务列表 + 统计入口 -->
+        <div v-if="overlay === 'courseDetailTeacher'">
+          <div class="task-card">
+            <div class="task-title">{{ detailCourse.name }}</div>
+            <div class="muted">邀请码 <b>{{ detailCourse.invite_code }}</b> · {{ detailCourse.student_count }} 人</div>
+            <div style="margin-top:10px;display:flex;gap:8px;">
+              <van-button size="small" type="primary" plain @click="openCourseStats(detailCourse)">课程整体统计</van-button>
+              <van-button size="small" plain @click="copyCode(detailCourse.invite_code)">复制邀请码</van-button>
+            </div>
+          </div>
+          <div class="section-title">签到任务</div>
+          <div v-for="t in detailTasks" :key="t.id" class="task-card" @click="openTaskDetail(t)">
+            <div class="list-head">{{ fmtTime(t.start_time) }} · {{ t.type === 'code' ? '签到码' : '定位' }}</div>
+            <div class="tag-row" style="margin-top:6px;">
+              <van-tag v-if="t.status === 'active'" color="#07c160" round>进行中</van-tag>
+              <van-tag v-else color="#969799" round>已结束</van-tag>
+            </div>
+            <div style="margin-top:8px;display:flex;gap:8px;">
+              <van-button size="small" plain type="primary" @click.stop="openTaskStats(t)">统计</van-button>
+              <van-button v-if="t.status === 'active'" size="small" plain @click.stop="openTaskManage(t)">管理</van-button>
+            </div>
+          </div>
+          <van-empty v-if="!detailTasks.length" description="还没有签到任务" image-size="80" ></van-empty>
+        </div>
+
+        <!-- 发起签到页(教师) -->
+        <div v-if="overlay === 'createTask'">
+          <div class="form-label">课程</div>
+          <div class="form-cell" @click="showCoursePicker = true">
+            <span :class="{ muted: !createForm.course_name }">{{ createForm.course_name || '点击选择课程' }}</span>
+            <van-icon name="arrow" color="#c8c9cc" style="float:right;" ></van-icon>
+          </div>
+          <div class="form-label">方式</div>
+          <div class="form-cell">
+            <van-radio-group v-model="createForm.type" direction="horizontal">
+              <van-radio name="code">🔢 签到码</van-radio>
+              <van-radio name="location">📍 定位签到</van-radio>
+            </van-radio-group>
+          </div>
+
+          <div v-if="createForm.type === 'location'" style="margin-top:12px;">
+            <div class="map-wrap">
+              <div class="center-pin">📍</div>
+              <div id="map"></div>
+            </div>
+            <div class="muted" style="margin:6px 2px;">拖动地图选中心点(点地图移动中心点)</div>
+            <div class="radius-pill">
+              <div v-for="r in [100, 300, 500]" :key="r" class="pill" :class="{ active: createForm.radius_m === r }" @click="createForm.radius_m = r">{{ r }} 米</div>
+            </div>
+            <div class="muted" style="margin:6px 2px;">中心点:{{ createForm.center_lat.toFixed(6) }}, {{ createForm.center_lng.toFixed(6) }}</div>
+          </div>
+
+          <div style="margin-top:12px;">
+            <div class="section-title" style="margin-top:0;">签到时长</div>
+            <div class="radius-pill">
+              <div v-for="d in [5, 10, 15, 30, 45]" :key="d" class="pill" :class="{ active: quickMinute === d }" @click="setQuickDuration(d)">{{ d }} 分钟</div>
+            </div>
+            <div class="form-label">截止时间</div>
+            <input type="datetime-local" v-model="createForm.end_time" class="login-input" />
+          </div>
+
+          <div style="margin:16px 0;">
+            <button class="login-btn" :disabled="submitLoading" @click="createTask">{{ submitLoading ? '创建中…' : '创建签到' }}</button>
+          </div>
+          <van-popup v-model:show="showCoursePicker" position="bottom" round>
+            <van-picker :columns="coursePickerColumns" @confirm="pickCourse" @cancel="showCoursePicker = false" ></van-picker>
+          </van-popup>
+        </div>
+
+        <!-- 任务管理页(教师) -->
+        <div v-if="overlay === 'taskManage'">
+          <div class="task-card">
+            <div class="task-title">{{ manageTask.course_name }} {{ manageTask.type === 'code' ? '🔢' : '📍' }}</div>
+            <div class="task-sub" v-if="manageTask.code">签到码:<b style="font-size:18px;letter-spacing:2px;">{{ manageTask.code }}</b></div>
+            <div class="task-foot">
+              <span class="countdown" :class="{ warn: remaining(manageTask.end_time) <= 900000 }" v-if="manageTask.status === 'active'">{{ fmtCountdown(manageTask.end_time) }}</span>
+              <van-tag v-else color="#969799" round>已结束</van-tag>
+              <span class="muted">已签 {{ records.signed.length }} / {{ records.signed.length + records.unsigned.length + records.leaves.length + records.appeals.filter(a => a.appeal_status === 'appeal_approved').length }}</span>
+            </div>
+            <div style="margin-top:10px;" v-if="manageTask.status === 'active'">
+              <van-button size="small" type="danger" plain @click="endTask">提前结束</van-button>
+            </div>
+          </div>
+          <van-tabs v-model:active="recordTab">
+            <van-tab :title="`已签到 ${records.signed.length}`">
+              <div v-for="s in records.signed" :key="s.id" class="appeal-item" style="margin-top:8px;">
+                <b>{{ s.name }}</b> <span class="muted">{{ s.account }} · {{ fmtTime(s.sign_time) }}</span>
+              </div>
+              <van-empty v-if="!records.signed.length" description="暂无" image-size="60" ></van-empty>
+            </van-tab>
+            <van-tab :title="`未签到 ${records.unsigned.length}`">
+              <div v-for="s in records.unsigned" :key="s.id" class="appeal-item" style="margin-top:8px;">
+                <b style="color:#ee0a24;">{{ s.name }}</b> <span class="muted">{{ s.account }}</span>
+                <van-tag v-if="s.can_appeal" color="#ff976a" round style="margin-left:8px;">24h 内可补签</van-tag>
+              </div>
+              <van-empty v-if="!records.unsigned.length" description="全部已签 🎉" image-size="60" ></van-empty>
+            </van-tab>
+            <van-tab :title="`请假 ${records.leaves.length}`">
+              <div v-for="s in records.leaves" :key="s.id" class="appeal-item" style="margin-top:8px;">
+                <b style="color:#1989fa;">{{ s.name }}</b> <span class="muted">{{ s.account }}</span>
+              </div>
+              <van-empty v-if="!records.leaves.length" description="暂无" image-size="60" ></van-empty>
+            </van-tab>
+            <van-tab :title="`补签 ${records.appeals.length}`">
+              <div v-for="s in records.appeals" :key="s.id" class="appeal-item" style="margin-top:8px;">
+                <b>{{ s.name }}</b> <span class="muted">{{ s.account }}</span>
+                <van-tag :color="s.appeal_status === 'appeal_approved' ? '#00c8c8' : s.appeal_status === 'appeal_pending' ? '#ff976a' : '#ee0a24'" round style="margin-left:8px;">{{ statusText(s.appeal_status) }}</van-tag>
+              </div>
+              <van-empty v-if="!records.appeals.length" description="暂无" image-size="60" ></van-empty>
+            </van-tab>
+          </van-tabs>
+        </div>
+
+        <!-- 审批详情页(教师) -->
+        <div v-if="overlay === 'approvalDetail'">
+          <div class="task-card">
+            <div class="task-title">
+              <van-tag :color="approvalItem.kind === 'appeal' ? '#ff976a' : '#1989fa'" round>{{ approvalItem.kind === 'appeal' ? '补签申请' : '请假申请' }}</van-tag>
+            </div>
+            <div style="margin-top:10px;line-height:1.8;">
+              <div><b>学生:</b>{{ approvalItem.student_name }} ({{ approvalItem.account }})</div>
+              <div><b>课程:</b>{{ approvalItem.course_name }}</div>
+              <div v-if="approvalItem.kind === 'appeal'"><b>任务时间:</b>{{ fmtTime(approvalItem.start_time) }}</div>
+              <div v-else><b>请假时间:</b>{{ fmtTime(approvalItem.start_time) }} ~ {{ fmtTime(approvalItem.end_time) }}</div>
+              <div v-if="approvalItem.kind === 'leave'"><b>类型:</b>{{ approvalItem.leave_type === 'sick' ? '病假' : approvalItem.leave_type === 'personal' ? '事假' : '其他' }}</div>
+              <div><b>理由:</b>{{ approvalItem.reason }}</div>
+              <div class="muted"><b>申请时间:</b>{{ fmtTime(approvalItem.created_at) }}</div>
+            </div>
+          </div>
+          <div v-if="approvalItem.status === 'pending'">
+            <div class="form-label">审批意见(选填)</div>
+            <textarea class="login-input" style="height:auto;padding:10px 14px;" v-model="reviewComment" rows="2" placeholder="写点意见…"></textarea>
+            <div style="margin:16px 0;display:flex;gap:12px;">
+              <button class="login-btn" style="background:#07c160;" :disabled="submitLoading" @click="reviewItem(true)">通 过</button>
+              <button class="login-btn" style="background:#ee0a24;" :disabled="submitLoading" @click="reviewItem(false)">拒 绝</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 单次任务统计(教师) -->
+        <div v-if="overlay === 'taskStats'">
+          <div class="stat-grid">
+            <div class="stat-box"><div class="stat-num" style="color:#1989fa;">{{ taskStats.rate }}%</div><div class="stat-label">出勤率</div></div>
+            <div class="stat-box"><div class="stat-num" style="color:#07c160;">{{ taskStats.normal }}</div><div class="stat-label">正常</div></div>
+            <div class="stat-box"><div class="stat-num" style="color:#1989fa;">{{ taskStats.leave }}</div><div class="stat-label">请假</div></div>
+            <div class="stat-box"><div class="stat-num" style="color:#ee0a24;">{{ taskStats.absent }}</div><div class="stat-label">缺勤</div></div>
+          </div>
+          <van-field v-model="statsKeyword" placeholder="按姓名/学号搜索" clearable style="background:#fff;border-radius:8px;margin-bottom:8px;" ></van-field>
+          <div v-for="r in filteredStatsRows" :key="r.account" class="appeal-item" style="display:flex;justify-content:space-between;align-items:center;">
+            <div><b>{{ r.name }}</b> <span class="muted">{{ r.account }}</span></div>
+            <van-tag :color="statusColor(r.status)" round>{{ statusText(r.status) }}</van-tag>
+          </div>
+        </div>
+
+        <!-- 课程整体统计(教师) -->
+        <div v-if="overlay === 'courseStats'">
+          <div class="muted" style="margin-bottom:8px;">{{ courseStats.course_name }} · 已结束任务 {{ courseStats.task_count }} 次</div>
+          <div v-for="r in courseStats.rows" :key="r.account" class="appeal-item">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div><b>{{ r.name }}</b> <span class="muted">{{ r.account }}</span></div>
+              <div class="rate-ring" :style="{ background: ringBg(r.rate), color: '#fff' }">{{ r.rate }}%</div>
+            </div>
+            <div class="muted" style="margin-top:6px;">
+              正常 {{ r.normal }} · 请假 {{ r.leave }} · 缺勤 {{ r.absent }} · 补签通过 {{ r.appeal_approved }}
+            </div>
+          </div>
+          <van-empty v-if="!courseStats.rows.length" description="暂无学生" image-size="80" ></van-empty>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/vendor/vue.global.prod.min.js"></script>
+<script src="/vendor/vant.min.js"></script>
+<script src="/vendor/leaflet.min.js"></script>
+<script>
+const { createApp, ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } = Vue;
+
+// 任务卡组件
+const TaskCard = {
+  props: ['task'],
+  emits: ['sign', 'appeal'],
+  data() {
+    return { now: Date.now() };
+  },
+  mounted() {
+    this.timer = setInterval(() => { this.now = Date.now(); }, 1000);
+  },
+  beforeUnmount() {
+    clearInterval(this.timer);
+  },
+  computed: {
+    btnState() {
+      const s = this.task.my_status;
+      if (s === 'unsigned') return { text: '立即签到', color: '#07c160', action: 'sign' };
+      if (s === 'normal') return { text: '已签到 ✓', color: '#969799', done: true };
+      if (s === 'leave_pending') return { text: '请假审批中', color: '#ff976a' };
+      if (s === 'leave') return { text: '请假', color: '#1989fa', done: true };
+      if (s === 'absent_can_appeal') return { text: '申请补签', color: '#ff976a', action: 'appeal' };
+      if (s === 'absent') return { text: '缺勤', color: '#ee0a24', done: true };
+      if (s === 'appeal_pending') return { text: '补签待审', color: '#ff976a' };
+      if (s === 'appeal_approved') return { text: '补签通过', color: '#00c8c8', done: true };
+      if (s === 'appeal_rejected') return { text: '补签拒绝', color: '#ee0a24', done: true };
+      return { text: '', color: '#969799' };
+    },
+    leftMs() { return new Date(this.task.end_time) - this.now; },
+    warn() { return this.leftMs > 0 && this.leftMs <= 15 * 60000; },
+    mmss() {
+      if (this.leftMs <= 0) return '00:00';
+      const s = Math.floor(this.leftMs / 1000);
+      return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+    },
+  },
+  template: `
+    <div class="task-card" :class="{ deadline: warn, done: btnState.done }" @click="$emit(btnState.action || 'none')">
+      <div class="task-title">{{ task.course_name }} {{ task.type === 'code' ? '🔢' : '📍' }}</div>
+      <div class="task-sub">{{ task.teacher_name }} · 截止 {{ fmtTime2(task.end_time) }}</div>
+      <div class="task-foot">
+        <span class="countdown" :class="{ warn: warn }">{{ mmss }}</span>
+        <van-button size="small" :color="btnState.color" :plain="!btnState.action" :disabled="!btnState.action" @click.stop="$emit(btnState.action || 'none')">{{ btnState.text }}</van-button>
+      </div>
+      <van-tag v-if="warn" color="#ff976a" round style="position:absolute;right:10px;top:10px;">即将截止</van-tag>
+    </div>
+  `,
+  methods: {
+    fmtTime2(t) {
+      const d = new Date(t);
+      const p = (n) => String(n).padStart(2, '0');
+      return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    },
+  },
+};
+
+createApp({
+  components: { TaskCard },
+  setup() {
+    const user = ref(JSON.parse(localStorage.getItem('zb_user') || 'null'));
+    const token = ref(localStorage.getItem('zb_token') || '');
+    const activeTab = ref('home');
+    const overlay = ref(null);
+    const nowTick = ref(Date.now());
+    let timer = null;
+
+    // 登录/注册
+    const loginForm = reactive({ account: '', password: '' });
+    const loginLoading = ref(false);
+    const showRegister = ref(false);
+    const regForm = reactive({ account: '', name: '', password: '', confirm: '', role: 'student' });
+
+    // 学生数据
+    const activeTasks = ref([]);
+    const appealAvailable = ref([]);
+    const myAppeals = ref([]);
+    const myLeaves = ref([]);
+    const applyTab = ref(0);
+
+    // 教师数据
+    const myCourses = ref([]);
+    const teaActiveTasks = ref([]);
+    const pendingList = ref([]);
+    const doneList = ref([]);
+    const approvalTab = ref(0);
+
+    // 通用
+    const showJoinPopup = ref(false);
+    const joinCode = ref('');
+    const showCreateCourse = ref(false);
+    const newCourseName = ref('');
+    const submitLoading = ref(false);
+
+    // 签到页
+    const signTask = ref(null);
+    const signCode = ref('');
+    const signLoading = ref(false);
+    const locStatus = ref('loading');
+    const locDist = ref(0);
+    const locAccuracy = ref(0);
+    let locWatch = null;
+
+    // 补签
+    const appealTask = ref(null);
+    const appealReason = ref('');
+    const appealDeadline = ref(0);
+
+    // 请假
+    const leaveForm = reactive({ course_id: null, leave_type: 'sick', start_time: '', end_time: '', reason: '' });
+    const leaveCourseName = ref('');
+    const showCoursePicker = ref(false);
+
+    // 课程详情
+    const detailCourse = ref(null);
+    const detailTasks = ref([]);
+
+    // 教师发起签到
+    const createForm = reactive({ course_id: null, course_name: '', type: 'code', center_lat: 39.908823, center_lng: 116.397470, radius_m: 300, end_time: '' });
+    const quickMinute = ref(10);
+    let map = null;
+    let mapMarker = null;
+
+    // 任务管理
+    const manageTask = ref(null);
+    const records = reactive({ signed: [], unsigned: [], leaves: [], appeals: [] });
+    const recordTab = ref(0);
+    let recordTimer = null;
+
+    // 审批详情
+    const approvalItem = ref(null);
+    const reviewComment = ref('');
+
+    // 统计
+    const taskStats = ref({ rate: 0, normal: 0, leave: 0, absent: 0, rows: [] });
+    const courseStats = ref({ course_name: '', task_count: 0, rows: [] });
+    const statsKeyword = ref('');
+
+    const greet = computed(() => {
+      const h = new Date().getHours();
+      return h < 6 ? '夜深了' : h < 9 ? '早上好' : h < 12 ? '上午好' : h < 14 ? '中午好' : h < 18 ? '下午好' : '晚上好';
+    });
+    const today = computed(() => {
+      const d = new Date();
+      const w = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} 星期${w}`;
+    });
+    const stuNavTitle = computed(() => ({ home: '首页', courses: '课程', applies: '我的申请', me: '我的' })[activeTab.value]);
+    const teaNavTitle = computed(() => ({ home: '首页', courses: '课程', approvals: '审批中心', me: '我的' })[activeTab.value]);
+    const overlayTitle = computed(() => ({
+      sign: '签到', appealApply: '申请补签', leaveApply: '申请请假',
+      courseDetail: '课程详情', courseDetailTeacher: '课程详情',
+      createTask: '发起签到', taskManage: '签到管理', approvalDetail: '审批详情',
+      taskStats: '任务统计', courseStats: '课程统计',
+    })[overlay.value] || '');
+    const coursePickerColumns = computed(() => myCourses.value.map((c) => ({ text: c.name, value: c.id })));
+    const filteredStatsRows = computed(() => {
+      const kw = statsKeyword.value.trim();
+      if (!kw) return taskStats.value.rows;
+      return taskStats.value.rows.filter((r) => r.name.includes(kw) || r.account.includes(kw));
+    });
+
+    async function api(method, path, body) {
+      const res = await fetch('/api' + path, {
+        method,
+        headers: { 'Content-Type': 'application/json', ...(token.value ? { Authorization: 'Bearer ' + token.value } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json();
+      if (res.status === 401) { logout(); throw new Error(data.message); }
+      if (!res.ok) throw new Error(data.message || '请求失败');
+      return data;
+    }
+    const toast = (msg) => vant.showToast({ message: msg, position: 'top' });
+
+    // 登录注册
+    async function doLogin() {
+      if (!loginForm.account || !loginForm.password) return toast('请输入账号和密码');
+      loginLoading.value = true;
+      try {
+        const data = await api('POST', '/auth/login', loginForm);
+        token.value = data.token;
+        user.value = data.user;
+        localStorage.setItem('zb_token', data.token);
+        localStorage.setItem('zb_user', JSON.stringify(data.user));
+        vant.showSuccessToast('欢迎,' + data.user.name);
+        await loadAll();
+      } catch (e) { toast(e.message); } finally { loginLoading.value = false; }
+    }
+    async function doRegister() {
+      if (regForm.password.length < 6) return toast('密码至少 6 位');
+      if (regForm.password !== regForm.confirm) return toast('两次密码不一致');
+      try {
+        await api('POST', '/auth/register', regForm);
+        showRegister.value = false;
+        loginForm.account = regForm.account;
+        loginForm.password = regForm.password;
+        vant.showSuccessToast('注册成功,请登录');
+      } catch (e) { toast(e.message); }
+    }
+    function logout() {
+      localStorage.removeItem('zb_token');
+      localStorage.removeItem('zb_user');
+      token.value = '';
+      user.value = null;
+      overlay.value = null;
+    }
+
+    // 加载全部
+    async function loadAll() {
+      if (!user.value) return;
+      if (user.value.role === 'student') await Promise.all([loadActiveTasks(), loadAppealAvailable(), loadMyAppeals(), loadMyLeaves()]);
+      else await Promise.all([loadCourses(), loadApprovals()]);
+      await loadCourses();
+    }
+    async function loadActiveTasks() {
+      try { activeTasks.value = (await api('GET', '/signin-tasks/active')).tasks; } catch {}
+    }
+    async function loadAppealAvailable() {
+      try { appealAvailable.value = (await api('GET', '/appeals/available')).tasks; } catch {}
+    }
+    async function loadMyAppeals() {
+      try { myAppeals.value = (await api('GET', '/appeals/my')).appeals; } catch {}
+    }
+    async function loadMyLeaves() {
+      try { myLeaves.value = (await api('GET', '/leaves/my')).leaves; } catch {}
+    }
+    async function loadCourses() {
+      myCourses.value = (await api('GET', '/courses')).courses;
+      if (user.value.role === 'teacher') await loadTeaActiveTasks();
+    }
+    async function loadTeaActiveTasks() {
+      teaActiveTasks.value = [];
+      for (const c of myCourses.value) {
+        const { tasks } = await api('GET', '/signin-tasks?course_id=' + c.id);
+        const active = tasks.find((t) => t.status === 'active');
+        if (active) teaActiveTasks.value.push({ ...active, course_name: c.name, code: active.code });
+      }
+    }
+    async function loadApprovals() {
+      const [appeals, leaves, doneAppeals, doneLeaves] = await Promise.all([
+        api('GET', '/appeals?status=pending'),
+        api('GET', '/leaves?status=pending'),
+        api('GET', '/appeals?status=approved'),
+        api('GET', '/appeals?status=rejected'),
+      ]);
+      const mix = (arr, kind) => arr.map((x) => ({ ...x, kind }));
+      pendingList.value = [...mix(appeals.appeals, 'appeal'), ...mix(leaves.leaves, 'leave')].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      doneList.value = [...mix(doneAppeals.appeals, 'appeal'), ...mix(doneLeaves.leaves, 'leave')].sort((a, b) => new Date(b.reviewed_at) - new Date(a.reviewed_at));
+    }
+
+    // 学生操作
+    const codeInput = ref(null);
+    function openSign(t) { signTask.value = t; signCode.value = ''; locStatus.value = 'loading'; locDist.value = 0; overlay.value = 'sign'; nextTick(() => { if (t.type === 'location') startLocate(); else focusCodeInput(); }); }
+    function focusCodeInput() { if (codeInput.value) codeInput.value.focus(); }
+    function openAppealApplyFromTask(t) {
+      appealTask.value = { id: t.id, course_name: detailCourse.value.name, end_time: t.end_time, ended_at: t.ended_at };
+      openAppealApply(appealTask.value);
+    }
+    function openAppealApply(t) {
+      appealTask.value = t;
+      appealReason.value = '';
+      appealDeadline.value = new Date(new Date(t.ended_at || t.end_time).getTime() + 24 * 3600000);
+      overlay.value = 'appealApply';
+    }
+    function openAppealList() {
+      if (appealAvailable.value.length) openAppealApply(appealAvailable.value[0]);
+    }
+    async function submitAppeal() {
+      if (appealReason.value.length < 10) return toast('理由至少 10 字');
+      submitLoading.value = true;
+      try {
+        await api('POST', '/appeals', { task_id: appealTask.value.id, reason: appealReason.value });
+        vant.showSuccessToast('已提交,等待老师审批');
+        overlay.value = null;
+        await loadAll();
+      } catch (e) { toast(e.message); } finally { submitLoading.value = false; }
+    }
+    async function doSign() {
+      signLoading.value = true;
+      try {
+        const body = signTask.value.type === 'code' ? { code: signCode.value } : { lat: locLat.value, lng: locLng.value };
+        await api('POST', '/signin-tasks/' + signTask.value.id + '/sign', body);
+        signLoading.value = false;
+        vant.showDialog({
+          title: '签到成功 ✓',
+          message: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+          confirmButtonText: '返回',
+        }).then(() => { overlay.value = null; loadAll(); });
+      } catch (e) { signLoading.value = false; toast(e.message); signCode.value = ''; focusCodeInput(); }
+    }
+    const locLat = ref(null);
+    const locLng = ref(null);
+    function startLocate() {
+      locStatus.value = 'loading';
+      if (!navigator.geolocation) { locStatus.value = 'denied'; return toast('浏览器不支持定位'); }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          locLat.value = pos.coords.latitude;
+          locLng.value = pos.coords.longitude;
+          locAccuracy.value = pos.coords.accuracy;
+          updateDist();
+          locStatus.value = 'ok';
+          locWatch = navigator.geolocation.watchPosition(
+            (p) => { locLat.value = p.coords.latitude; locLng.value = p.coords.longitude; locAccuracy.value = p.coords.accuracy; updateDist(); },
+            () => { locStatus.value = 'error'; },
+            { enableHighAccuracy: true }
+          );
+        },
+        () => { locStatus.value = 'denied'; }
+      );
+    }
+    function updateDist() {
+      if (signTask.value && locLat.value != null) {
+        const R = 6371000, toRad = (d) => d * Math.PI / 180;
+        const dLat = toRad(locLat.value - signTask.value.center_lat), dLng = toRad(locLng.value - signTask.value.center_lng);
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(signTask.value.center_lat)) * Math.cos(toRad(locLat.value)) * Math.sin(dLng / 2) ** 2;
+        locDist.value = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      }
+    }
+    function openLeaveApply(course) {
+      leaveForm.course_id = course ? course.id : null;
+      leaveCourseName.value = course ? course.name : '';
+      leaveForm.leave_type = 'sick';
+      leaveForm.reason = '';
+      const pad = (n) => String(n).padStart(2, '0');
+      const d = new Date();
+      leaveForm.start_time = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T08:00`;
+      leaveForm.end_time = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T10:00`;
+      overlay.value = 'leaveApply';
+    }
+    function pickCourse({ selectedOptions }) {
+      const id = selectedOptions[0].value;
+      const name = selectedOptions[0].text;
+      showCoursePicker.value = false;
+      if (overlay.value === 'leaveApply') {
+        leaveForm.course_id = id;
+        leaveCourseName.value = name;
+      } else if (overlay.value === 'createTask') {
+        createForm.course_id = id;
+        createForm.course_name = name;
+      }
+    }
+    async function submitLeave() {
+      if (!leaveForm.course_id) return toast('请选择课程');
+      if (!leaveForm.start_time || !leaveForm.end_time || leaveForm.start_time >= leaveForm.end_time) return toast('时间范围不合法');
+      if (leaveForm.reason.length < 10) return toast('理由至少 10 字');
+      submitLoading.value = true;
+      try {
+        await api('POST', '/leaves', { ...leaveForm, start_time: new Date(leaveForm.start_time).toISOString(), end_time: new Date(leaveForm.end_time).toISOString() });
+        vant.showSuccessToast('已提交,等待老师审批');
+        overlay.value = null;
+        await loadAll();
+      } catch (e) { toast(e.message); } finally { submitLoading.value = false; }
+    }
+    async function openCourseDetail(c) {
+      detailCourse.value = c;
+      overlay.value = user.value.role === 'student' ? 'courseDetail' : 'courseDetailTeacher';
+      const data = await api('GET', '/courses/' + c.id);
+      detailTasks.value = data.tasks;
+    }
+    async function joinCourse() {
+      if (joinCode.value.length !== 6) return toast('请输入 6 位邀请码');
+      try {
+        const r = await api('POST', '/courses/join', { invite_code: joinCode.value });
+        vant.showSuccessToast('已加入:' + r.course_name);
+        showJoinPopup.value = false;
+        joinCode.value = '';
+        await loadAll();
+      } catch (e) { toast(e.message); }
+    }
+    async function createCourse() {
+      if (!newCourseName.value.trim()) return toast('请输入课程名');
+      try {
+        const r = await api('POST', '/courses', { name: newCourseName.value.trim() });
+        vant.showDialog({ title: '创建成功', message: '邀请码:' + r.invite_code + '(请口头告知学生)' });
+        showCreateCourse.value = false;
+        newCourseName.value = '';
+        await loadAll();
+      } catch (e) { toast(e.message); }
+    }
+    function copyCode(code) {
+      navigator.clipboard.writeText(code).then(() => toast('已复制:' + code)).catch(() => toast(code));
+    }
+
+    // 教师操作
+    function openCreateTask() {
+      createForm.course_id = null;
+      createForm.course_name = '';
+      createForm.type = 'code';
+      setQuickDuration(10);
+      overlay.value = 'createTask';
+      nextTick(() => { if (createForm.type === 'location') initMap(); });
+    }
+    function setQuickDuration(min) {
+      quickMinute.value = min;
+      const d = new Date(Date.now() + min * 60000);
+      const pad = (n) => String(n).padStart(2, '0');
+      createForm.end_time = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    watch(() => createForm.type, (v) => { if (v === 'location') nextTick(initMap); });
+    function initMap() {
+      if (map) { map.invalidateSize(); return; }
+      map = L.map('map').setView([createForm.center_lat, createForm.center_lng], 16);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+      mapMarker = L.marker([createForm.center_lat, createForm.center_lng], { draggable: true }).addTo(map);
+      const setCenter = (latlng) => { createForm.center_lat = Number(latlng.lat.toFixed(6)); createForm.center_lng = Number(latlng.lng.toFixed(6)); mapMarker.setLatLng(latlng); };
+      mapMarker.on('dragend', () => setCenter(mapMarker.getLatLng()));
+      map.on('click', (e) => setCenter(e.latlng));
+      setTimeout(() => map.invalidateSize(), 200);
+    }
+    async function createTask() {
+      if (!createForm.course_id) return toast('请选择课程');
+      if (!createForm.end_time || new Date(createForm.end_time) <= new Date()) return toast('截止时间不合法');
+      submitLoading.value = true;
+      try {
+        const body = { course_id: createForm.course_id, type: createForm.type, end_time: new Date(createForm.end_time).toISOString() };
+        if (createForm.type === 'location') Object.assign(body, { center_lat: createForm.center_lat, center_lng: createForm.center_lng, radius_m: createForm.radius_m });
+        const r = await api('POST', '/signin-tasks', body);
+        if (createForm.type === 'code') {
+          vant.showDialog({ title: '签到已创建', message: '签到码:' + r.code, confirmButtonText: '查看名单' }).then(() => {
+            overlay.value = null;
+            loadAll();
+          });
+        } else {
+          vant.showSuccessToast('定位签到已创建');
+          overlay.value = null;
+          loadAll();
+        }
+      } catch (e) { toast(e.message); } finally { submitLoading.value = false; }
+    }
+    async function openTaskManage(t) {
+      manageTask.value = t;
+      recordTab.value = 0;
+      overlay.value = 'taskManage';
+      await loadRecords();
+      recordTimer = setInterval(loadRecords, 5000);
+    }
+    async function loadRecords() {
+      const data = await api('GET', '/signin-tasks/' + manageTask.value.id + '/records');
+      Object.assign(records, data);
+    }
+    async function endTask() {
+      try {
+        await vant.showConfirmDialog({ title: '提前结束签到?', message: '未签到学生将记为缺勤' });
+      } catch { return; }
+      await api('POST', '/signin-tasks/' + manageTask.value.id + '/end');
+      toast('已结束');
+      await loadRecords();
+      loadAll();
+    }
+    function openApprovalDetail(item) {
+      approvalItem.value = item;
+      reviewComment.value = '';
+      overlay.value = 'approvalDetail';
+    }
+    async function reviewItem(approve) {
+      submitLoading.value = true;
+      try {
+        const path = approvalItem.value.kind === 'appeal' ? '/appeals/' : '/leaves/';
+        await api('PUT', path + approvalItem.value.id + '/review', { approve, comment: reviewComment.value });
+        vant.showSuccessToast(approve ? '已通过' : '已拒绝');
+        overlay.value = null;
+        await loadApprovals();
+      } catch (e) { toast(e.message); } finally { submitLoading.value = false; }
+    }
+    async function openTaskStats(t) {
+      overlay.value = 'taskStats';
+      statsKeyword.value = '';
+      const d = await api('GET', '/signin-tasks/' + t.id + '/stats');
+      taskStats.value = d;
+    }
+    async function openCourseStats(c) {
+      overlay.value = 'courseStats';
+      courseStats.value = await api('GET', '/courses/' + c.id + '/stats');
+    }
+    function openTaskDetail(t) { openTaskManage({ ...t, course_name: detailCourse.value.name }); }
+
+    // 覆盖层关闭
+    function closeOverlay() {
+      if (locWatch) { navigator.geolocation.clearWatch(locWatch); locWatch = null; }
+      if (recordTimer) { clearInterval(recordTimer); recordTimer = null; }
+      overlay.value = null;
+      loadAll();
+    }
+
+    // 工具
+    function fmtTime(t) {
+      if (!t) return '';
+      const d = new Date(t);
+      const p = (n) => String(n).padStart(2, '0');
+      return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+    function remaining(end) { return new Date(end) - nowTick.value; }
+    function fmtCountdown(end) {
+      const ms = remaining(end);
+      if (ms <= 0) return '00:00';
+      const s = Math.floor(ms / 1000);
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = s % 60;
+      const p = (n) => String(n).padStart(2, '0');
+      return h > 0 ? `${h}:${p(m)}:${p(sec)}` : `${p(m)}:${p(sec)}`;
+    }
+    function statusText(s) {
+      return { pending: '审批中', approved: '已通过', rejected: '已拒绝', normal: '已签到', leave: '请假', appeal_pending: '补签待审', appeal_approved: '补签通过', appeal_rejected: '补签拒绝', absent: '缺勤' }[s] || s;
+    }
+    function statusColor(s) {
+      return { normal: '#07c160', leave: '#1989fa', pending: '#ff976a', approved: '#00c8c8', rejected: '#ee0a24', appeal_pending: '#ff976a', appeal_approved: '#00c8c8', appeal_rejected: '#ee0a24', absent: '#ee0a24' }[s] || '#969799';
+    }
+    function ringBg(rate) {
+      return rate >= 80 ? '#07c160' : rate >= 60 ? '#ff976a' : '#ee0a24';
+    }
+
+    onMounted(() => {
+      timer = setInterval(() => { nowTick.value = Date.now(); }, 1000);
+      if (user.value) loadAll();
+    });
+    onUnmounted(() => { clearInterval(timer); });
+
+    return {
+      user, token, activeTab, overlay, overlayTitle,
+      loginForm, loginLoading, doLogin, showRegister, regForm, doRegister, logout,
+      activeTasks, appealAvailable, myAppeals, myLeaves, applyTab,
+      myCourses, teaActiveTasks, pendingList, doneList, approvalTab,
+      greet, today, stuNavTitle, teaNavTitle,
+      showJoinPopup, joinCode, joinCourse, showCreateCourse, newCourseName, createCourse,
+      signTask, signCode, signLoading, codeInput, focusCodeInput, locStatus, locDist, locAccuracy, doSign, startLocate,
+      appealTask, appealReason, appealDeadline, submitAppeal, openAppealList, openAppealApply,
+      leaveForm, leaveCourseName, showCoursePicker, coursePickerColumns, pickCourse, submitLeave, openLeaveApply,
+      detailCourse, detailTasks, openCourseDetail, openAppealApplyFromTask,
+      createForm, quickMinute, setQuickDuration, createTask,
+      manageTask, records, recordTab, endTask, loadRecords,
+      approvalItem, reviewComment, reviewItem, openApprovalDetail,
+      taskStats, courseStats, statsKeyword, filteredStatsRows, openTaskStats, openCourseStats,
+      openSign, openCreateTask, openTaskManage, copyCode, closeOverlay,
+      fmtTime, remaining, fmtCountdown, statusText, statusColor, ringBg,
+      submitLoading, loadAll,
+    };
+  },
+}).use(vant).mount('#app');
+</script>
+</body>
+</html>

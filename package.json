@@ -1,0 +1,21 @@
+{
+  "name": "zaoba-signin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "早八签到系统:学生/教师双端,签到码+定位签到,补签请假审批",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file=.env server.js",
+    "seed": "node --env-file=.env seed.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.14.3"
+  },
+  "devDependencies": {
+    "@vue/compiler-dom": "^3.5.42",
+    "jsdom": "^29.1.1"
+  }
+}
