@@ -82,6 +82,16 @@ npm start       # Express 托管 dist/,浏览器打开 http://localhost:3000
 
 演示账号(密码都是 `123456`):教师 `t001`;学生 `s001` ~ `s0010`。
 
+### 管理员账号(单独创建,注册页不开放)
+
+管理员是"教师超集":能看全部课程、审批所有人的申请,并且多一个「用户管理」菜单,可以删除非管理员账号(连带清理其课程/签到/申请)。管理员**不能**通过注册页注册 —— 注册接口只接受 `student` / `teacher`。
+
+```powershell
+npm run create-admin -- admin admin123 系统管理员   # 不存在则创建,已存在则提权并重置密码
+```
+
+`npm run seed` 也会顺带建一个 `admin` / `admin123`。管理员登录后左侧会多出「用户管理」,可查看全部账号并按需删除。
+
 `.env` 存数据库密码等敏感配置(已被 .gitignore 忽略,不会提交到 git)。`npm start` 里的 `--env-file=.env` 就是让 Node 启动时自动把 .env 读成环境变量。
 
 ## 五、数据库设计(7 张表)
@@ -94,7 +104,7 @@ npm start       # Express 托管 dist/,浏览器打开 http://localhost:3000
 | id | INT 自增主键 | 每张表都有 |
 | account | VARCHAR(50) UNIQUE | 学号/工号,登录账号,唯一 |
 | name | VARCHAR(50) | 姓名 |
-| role | ENUM('student','teacher') | 角色,决定进哪个端 |
+| role | ENUM('student','teacher','admin') | 角色,决定进哪个端(admin = 教师超集) |
 | password_hash | VARCHAR(100) | bcrypt 哈希后的密码,**不存明文** |
 | created_at | DATETIME | 注册时间 |
 
@@ -179,12 +189,12 @@ PORT=3000
 
 ### 5. `auth.js` — 鉴权中间件
 - `auth`:从请求头取 `Authorization: Bearer <token>`,用 `jwt.verify` 验签。通过就把 `{id,name,role,account}` 挂到 `req.user`,后续路由直接用;失败返回 401。
-- `requireRole('teacher'|'student')`:角色守卫,套在路由上拦截没权限的角色(403)。
+- `requireRole('teacher'|'student')`:角色守卫,套在路由上拦截没权限的角色(403)。管理员视为教师超集,`teacher` 路由对管理员放行,`student` 路由不放行。
 - **JWT 通俗解释**:登录成功后服务器把 `{id, name, role}` 加密签名成一段字符串发给前端;前端存 localStorage,之后每次请求放请求头里;服务器验签就知道"你是谁",不用存会话状态。
 
 ### 6. `seed.js` — 种子数据(可重复执行)
 用 `TRUNCATE` 清空 7 张表(顺带重置自增 id),然后造出:
-- 1 教师(t001)+ 10 学生(s001~s0010),密码全 bcrypt 哈希成 `123456`
+- 1 教师(t001)+ 10 学生(s001~s0010),密码全 bcrypt 哈希成 `123456`;外加 1 个管理员 `admin` / `admin123`
 - 3 门课程(高数/线代/数据结构)+ 选课关系
 - 5 个任务覆盖所有状态:进行中签到码、进行中定位、24h 内可补签缺勤、3 天前历史任务(补签通过+请假)、待审补签任务
 - 1 条待审补签 + 1 条待审请假 + 1 条已通过请假
@@ -245,6 +255,8 @@ PORT=3000
 | PUT | /leaves/:id/review | 教师 | {approve, comment} 事务审批,通过时批量置 leave |
 | GET | /signin-tasks/:id/stats | 教师 | 单次任务统计(缺勤/请假排最前) |
 | GET | /courses/:id/stats | 教师 | 课程整体统计(每生出勤率) |
+| GET | /admin/users | 管理员 | 全部账号(含课程数/签到数,不含密码哈希) |
+| DELETE | /admin/users/:id | 管理员 | 删除非管理员账号,事务级联清理其课程/任务/记录/申请 |
 
 ## 七、前端讲解 `src/`(Vue 3 单文件组件)
 
@@ -356,6 +368,7 @@ npm run seed      # 重置演示数据(清空重建)
 npm start         # 启动后端 http://localhost:3000(需先 npm run build)
 npm run dev       # 开发模式:Vite 热更新 http://localhost:5173
 npm run build     # 构建前端到 dist/
+npm run create-admin -- <账号> <密码> [姓名]   # 创建/提权管理员
 node smoke.js     # API 冒烟测试
 node e2e.js       # 端到端测试
 ```

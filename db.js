@@ -18,7 +18,22 @@ async function init() {
 
   pool = mysql.createPool(config.db);
   await createTables();
+  await upgradeRoleEnum();
   console.log('数据库就绪:', config.db.database);
+}
+
+// 老库升级:users.role 枚举补上 admin(幂等,只有缺了才 ALTER)
+async function upgradeRoleEnum() {
+  const [rows] = await pool.query(
+    `SELECT COLUMN_TYPE ct FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA=? AND TABLE_NAME='users' AND COLUMN_NAME='role'`,
+    [config.db.database]
+  );
+  const type = rows[0]?.ct || '';
+  if (type && !type.includes("'admin'")) {
+    await pool.query("ALTER TABLE users MODIFY COLUMN role ENUM('student','teacher','admin') NOT NULL");
+    console.log('已升级 users.role:新增 admin 角色');
+  }
 }
 
 async function createTables() {
@@ -27,7 +42,7 @@ async function createTables() {
       id INT AUTO_INCREMENT PRIMARY KEY,
       account VARCHAR(50) NOT NULL UNIQUE,
       name VARCHAR(50) NOT NULL,
-      role ENUM('student','teacher') NOT NULL,
+      role ENUM('student','teacher','admin') NOT NULL,
       password_hash VARCHAR(100) NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB`,

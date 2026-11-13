@@ -16,6 +16,13 @@ app.use(express.static(path.join(__dirname, 'dist')));
 const err = (res, status, message) => res.status(status).json({ code: status, message });
 const signJwt = (u) => jwt.sign({ id: u.id, name: u.name, role: u.role, account: u.account }, config.jwtSecret, { expiresIn: '7d' });
 
+// ============ 角色辅助 ============
+// 管理员 = 教师超集:能看/管所有课程,但不能走学生接口
+const isAdmin = (u) => u.role === 'admin';
+const isStaff = (u) => u.role === 'teacher' || u.role === 'admin';
+// 教师只能操作自己的课;管理员不受 teacher_id 限制
+const canManageCourse = (u, course) => !!course && (isAdmin(u) || Number(course.teacher_id) === Number(u.id));
+
 // 惰性结束:到期任务顺手落库
 async function ensureEnded(task) {
   if (task.status === 'active' && new Date() > task.end_time) {
@@ -71,6 +78,14 @@ app.get('/api/auth/me', auth, (req, res) => res.json({ user: req.user }));
 
 // ============ 课程 ============
 app.get('/api/courses', auth, async (req, res) => {
+  // 管理员:看全部课程(带任课教师名)
+  if (isAdmin(req.user)) {
+    const courses = await db.q(
+      `SELECT c.*, t.name teacher_name,
+        (SELECT COUNT(*) FROM enrollments e WHERE e.course_id=c.id) student_count
+       FROM courses c JOIN users t ON t.id=c.teacher_id ORDER BY c.id`);
+    return res.json({ courses });
+  }
   if (req.user.role === 'teacher') {
     const courses = await db.q(
       `SELECT c.*, (SELECT COUNT(*) FROM enrollments e WHERE e.course_id=c.id) student_count
@@ -104,8 +119,8 @@ app.post('/api/courses/join', auth, requireRole('student'), async (req, res) => 
 });
 
 app.post('/api/courses/:id/regenerate-code', auth, requireRole('teacher'), async (req, res) => {
-  const course = await db.q1('SELECT * FROM courses WHERE id=? AND teacher_id=?', [req.params.id, req.user.id]);
-  if (!course) return err(res, 404, '课程不存在');
+  const course = await db.q1('SELECT * FROM courses WHERE id=?', [req.params.id]);
+  if (!canManageCourse(req.user, course)) return err(res, 404, '课程不存在');
   let code;
   do { code = utils.genInviteCode(); } while (await db.q1('SELECT id FROM courses WHERE invite_code=?', [code]));
   await db.q('UPDATE courses SET invite_code=? WHERE id=?', [code, course.id]);
@@ -115,7 +130,7 @@ app.post('/api/courses/:id/regenerate-code', auth, requireRole('teacher'), async
 app.get('/api/courses/:id', auth, async (req, res) => {
   const course = await db.q1(`SELECT c.*, t.name teacher_name FROM courses c JOIN users t ON t.id=c.teacher_id WHERE c.id=?`, [req.params.id]);
   if (!course) return err(res, 404, '课程不存在');
-  if (req.user.role === 'teacher' && course.teacher_id !== req.user.id) return err(res, 403, '无权限');
+  if (isStaff(req.user) && !canManageCourse(req.user, course)) return err(res, 403, '无权限');
   if (req.user.role === 'student') {
     const enr = await db.q1('SELECT id FROM enrollments WHERE course_id=? AND student_id=?', [course.id, req.user.id]);
     if (!enr) return err(res, 403, '未加入该课程');
@@ -128,8 +143,8 @@ app.get('/api/courses/:id', auth, async (req, res) => {
 // ============ 签到任务 ============
 app.post('/api/signin-tasks', auth, requireRole('teacher'), async (req, res) => {
   const b = req.body || {};
-  const course = await db.q1('SELECT * FROM courses WHERE id=? AND teacher_id=?', [b.course_id, req.user.id]);
-  if (!course) return err(res, 404, '课程不存在');
+  const course = await db.q1('SELECT * FROM courses WHERE id=?', [b.course_id]);
+  if (!canManageCourse(req.user, course)) return err(res, 404, '课程不存在');
   const active = await db.q1("SELECT id FROM signin_tasks WHERE course_id=? AND status='active'", [course.id]);
   if (active) return err(res, 400, '该课程已有进行中的签到');
   const endTime = new Date(b.end_time);
@@ -195,7 +210,7 @@ app.get('/api/signin-tasks', auth, async (req, res) => {
   const courseId = req.query.course_id;
   const course = await db.q1('SELECT * FROM courses WHERE id=?', [courseId]);
   if (!course) return err(res, 404, '课程不存在');
-  if (req.user.role === 'teacher' && course.teacher_id !== req.user.id) return err(res, 403, '无权限');
+  if (isStaff(req.user) && !canManageCourse(req.user, course)) return err(res, 403, '无权限');
   if (req.user.role === 'student') {
     const enr = await db.q1('SELECT id FROM enrollments WHERE course_id=? AND student_id=?', [courseId, req.user.id]);
     if (!enr) return err(res, 403, '未加入该课程');
@@ -205,10 +220,10 @@ app.get('/api/signin-tasks', auth, async (req, res) => {
   const result = [];
   for (const t of tasks) {
     result.push({
-      id: t.id, type: t.type, code: req.user.role === 'teacher' ? t.code : undefined,
-      center_lat: req.user.role === 'teacher' ? t.center_lat : undefined,
-      center_lng: req.user.role === 'teacher' ? t.center_lng : undefined,
-      radius_m: req.user.role === 'teacher' ? t.radius_m : undefined,
+      id: t.id, type: t.type, code: isStaff(req.user) ? t.code : undefined,
+      center_lat: isStaff(req.user) ? t.center_lat : undefined,
+      center_lng: isStaff(req.user) ? t.center_lng : undefined,
+      radius_m: isStaff(req.user) ? t.radius_m : undefined,
       start_time: t.start_time, end_time: t.end_time, status: t.status, ended_at: t.ended_at,
       my_status: req.user.role === 'student' ? (await myTaskStatus(t, req.user.id)).status : undefined,
     });
@@ -219,7 +234,7 @@ app.get('/api/signin-tasks', auth, async (req, res) => {
 app.get('/api/signin-tasks/:id', auth, async (req, res) => {
   const task = await db.q1(`SELECT t.*, c.name course_name, c.teacher_id FROM signin_tasks t JOIN courses c ON c.id=t.course_id WHERE t.id=?`, [req.params.id]);
   if (!task) return err(res, 404, '任务不存在');
-  if (req.user.role === 'teacher' && task.teacher_id !== req.user.id) return err(res, 403, '无权限');
+  if (isStaff(req.user) && !canManageCourse(req.user, task)) return err(res, 403, '无权限');
   if (req.user.role === 'student') {
     const enr = await db.q1('SELECT id FROM enrollments WHERE course_id=? AND student_id=?', [task.course_id, req.user.id]);
     if (!enr) return err(res, 403, '未加入该课程');
@@ -266,7 +281,7 @@ app.post('/api/signin-tasks/:id/sign', auth, requireRole('student'), async (req,
 // 教师提前结束
 app.post('/api/signin-tasks/:id/end', auth, requireRole('teacher'), async (req, res) => {
   const task = await db.q1(`SELECT t.*, c.teacher_id FROM signin_tasks t JOIN courses c ON c.id=t.course_id WHERE t.id=?`, [req.params.id]);
-  if (!task || task.teacher_id !== req.user.id) return err(res, 404, '任务不存在');
+  if (!task || !canManageCourse(req.user, task)) return err(res, 404, '任务不存在');
   if (task.status === 'ended') return err(res, 400, '任务已结束');
   await db.q("UPDATE signin_tasks SET status='ended', ended_at=? WHERE id=?", [new Date(), task.id]);
   res.json({ ok: true });
@@ -275,7 +290,7 @@ app.post('/api/signin-tasks/:id/end', auth, requireRole('teacher'), async (req, 
 // 教师:任务名单(已签/未签/请假/补签)
 app.get('/api/signin-tasks/:id/records', auth, requireRole('teacher'), async (req, res) => {
   const task = await db.q1(`SELECT t.*, c.teacher_id FROM signin_tasks t JOIN courses c ON c.id=t.course_id WHERE t.id=?`, [req.params.id]);
-  if (!task || task.teacher_id !== req.user.id) return err(res, 404, '任务不存在');
+  if (!task || !canManageCourse(req.user, task)) return err(res, 404, '任务不存在');
   await ensureEnded(task);
   const students = await db.q('SELECT u.id,u.name,u.account FROM enrollments e JOIN users u ON u.id=e.student_id WHERE e.course_id=? ORDER BY u.account', [task.course_id]);
   const recs = await db.q('SELECT * FROM signin_records WHERE task_id=?', [task.id]);
@@ -333,8 +348,10 @@ app.get('/api/appeals', auth, requireRole('teacher'), async (req, res) => {
   let sql = `SELECT a.*, t.start_time, t.end_time, t.course_id, c.name course_name, u.name student_name, u.account
      FROM appeals a JOIN signin_tasks t ON t.id=a.task_id
      JOIN courses c ON c.id=t.course_id JOIN users u ON u.id=a.student_id
-     WHERE c.teacher_id=?`;
-  const params = [req.user.id];
+     WHERE 1=1`;
+  const params = [];
+  // 管理员:全部待审/已审;教师:只看自己课程
+  if (!isAdmin(req.user)) { sql += ' AND c.teacher_id=?'; params.push(req.user.id); }
   if (req.query.status) { sql += ' AND a.status=?'; params.push(req.query.status); }
   sql += ' ORDER BY a.created_at DESC';
   res.json({ appeals: await db.q(sql, params) });
@@ -343,7 +360,7 @@ app.get('/api/appeals', auth, requireRole('teacher'), async (req, res) => {
 // 审批补签(事务)
 app.put('/api/appeals/:id/review', auth, requireRole('teacher'), async (req, res) => {
   const appeal = await db.q1(`SELECT a.*, t.course_id, c.teacher_id FROM appeals a JOIN signin_tasks t ON t.id=a.task_id JOIN courses c ON c.id=t.course_id WHERE a.id=?`, [req.params.id]);
-  if (!appeal || appeal.teacher_id !== req.user.id) return err(res, 404, '申请不存在');
+  if (!appeal || !canManageCourse(req.user, appeal)) return err(res, 404, '申请不存在');
   if (appeal.status !== 'pending') return err(res, 400, '已审批过');
   const approve = !!req.body?.approve;
   const comment = (req.body?.comment || '').trim();
@@ -396,8 +413,10 @@ app.get('/api/leaves/my', auth, requireRole('student'), async (req, res) => {
 app.get('/api/leaves', auth, requireRole('teacher'), async (req, res) => {
   let sql = `SELECT l.*, c.name course_name, u.name student_name, u.account
      FROM leave_requests l JOIN courses c ON c.id=l.course_id JOIN users u ON u.id=l.student_id
-     WHERE c.teacher_id=?`;
-  const params = [req.user.id];
+     WHERE 1=1`;
+  const params = [];
+  // 管理员:全部;教师:只看自己课程
+  if (!isAdmin(req.user)) { sql += ' AND c.teacher_id=?'; params.push(req.user.id); }
   if (req.query.status) { sql += ' AND l.status=?'; params.push(req.query.status); }
   sql += ' ORDER BY l.created_at DESC';
   res.json({ leaves: await db.q(sql, params) });
@@ -406,7 +425,7 @@ app.get('/api/leaves', auth, requireRole('teacher'), async (req, res) => {
 // 审批请假(事务:通过时批量置 leave)
 app.put('/api/leaves/:id/review', auth, requireRole('teacher'), async (req, res) => {
   const lr = await db.q1(`SELECT l.*, c.teacher_id FROM leave_requests l JOIN courses c ON c.id=l.course_id WHERE l.id=?`, [req.params.id]);
-  if (!lr || lr.teacher_id !== req.user.id) return err(res, 404, '申请不存在');
+  if (!lr || !canManageCourse(req.user, lr)) return err(res, 404, '申请不存在');
   if (lr.status !== 'pending') return err(res, 400, '已审批过');
   const approve = !!req.body?.approve;
   const comment = (req.body?.comment || '').trim();
@@ -442,7 +461,7 @@ app.put('/api/leaves/:id/review', auth, requireRole('teacher'), async (req, res)
 // 单次任务统计
 app.get('/api/signin-tasks/:id/stats', auth, requireRole('teacher'), async (req, res) => {
   const task = await db.q1(`SELECT t.*, c.teacher_id FROM signin_tasks t JOIN courses c ON c.id=t.course_id WHERE t.id=?`, [req.params.id]);
-  if (!task || task.teacher_id !== req.user.id) return err(res, 404, '任务不存在');
+  if (!task || !canManageCourse(req.user, task)) return err(res, 404, '任务不存在');
   await ensureEnded(task);
   const students = await db.q('SELECT u.id,u.name,u.account FROM enrollments e JOIN users u ON u.id=e.student_id WHERE e.course_id=? ORDER BY u.account', [task.course_id]);
   const recs = await db.q('SELECT * FROM signin_records WHERE task_id=?', [task.id]);
@@ -472,8 +491,8 @@ app.get('/api/signin-tasks/:id/stats', auth, requireRole('teacher'), async (req,
 
 // 课程整体统计
 app.get('/api/courses/:id/stats', auth, requireRole('teacher'), async (req, res) => {
-  const course = await db.q1('SELECT * FROM courses WHERE id=? AND teacher_id=?', [req.params.id, req.user.id]);
-  if (!course) return err(res, 404, '课程不存在');
+  const course = await db.q1('SELECT * FROM courses WHERE id=?', [req.params.id]);
+  if (!canManageCourse(req.user, course)) return err(res, 404, '课程不存在');
   const students = await db.q('SELECT u.id,u.name,u.account FROM enrollments e JOIN users u ON u.id=e.student_id WHERE e.course_id=? ORDER BY u.account', [course.id]);
   const tasks = await db.q('SELECT * FROM signin_tasks WHERE course_id=?', [course.id]);
   for (const t of tasks) await ensureEnded(t);
@@ -502,6 +521,62 @@ app.get('/api/courses/:id/stats', auth, requireRole('teacher'), async (req, res)
     rows.push({ name: s.name, account: s.account, normal, appeal_approved: appealOk, leave, absent, rate: base > 0 ? Math.round(((normal + appealOk) / base) * 100) : 0 });
   }
   res.json({ course_name: course.name, task_count: ended.length, rows });
+});
+
+// ============ 管理员 ============
+// 用户列表(不含密码哈希)
+app.get('/api/admin/users', auth, requireRole('admin'), async (req, res) => {
+  const users = await db.q(
+    `SELECT u.id, u.account, u.name, u.role, u.created_at,
+       (SELECT COUNT(*) FROM courses c WHERE c.teacher_id=u.id) AS course_count,
+       (SELECT COUNT(*) FROM enrollments e WHERE e.student_id=u.id) AS enroll_count,
+       (SELECT COUNT(*) FROM signin_records r WHERE r.student_id=u.id) AS sign_count
+     FROM users u
+     ORDER BY FIELD(u.role,'admin','teacher','student'), u.id`);
+  res.json({ users });
+});
+
+// 删除非管理员账号(连带清理其课程/任务/签到/申请,事务保证原子)
+app.delete('/api/admin/users/:id', auth, requireRole('admin'), async (req, res) => {
+  const uid = Number(req.params.id);
+  if (!Number.isInteger(uid) || uid <= 0) return err(res, 400, '用户不存在');
+  const u = await db.q1('SELECT id, account, name, role FROM users WHERE id=?', [uid]);
+  if (!u) return err(res, 404, '用户不存在');
+  if (u.role === 'admin') return err(res, 400, '不能删除管理员账号');
+
+  const conn = await db.pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    if (u.role === 'teacher') {
+      const [courses] = await conn.query('SELECT id FROM courses WHERE teacher_id=?', [uid]);
+      const courseIds = courses.map((c) => c.id);
+      if (courseIds.length) {
+        const [tasks] = await conn.query('SELECT id FROM signin_tasks WHERE course_id IN (?)', [courseIds]);
+        const taskIds = tasks.map((t) => t.id);
+        if (taskIds.length) {
+          await conn.query('DELETE FROM appeals WHERE task_id IN (?)', [taskIds]);
+          await conn.query('DELETE FROM signin_records WHERE task_id IN (?)', [taskIds]);
+          await conn.query('DELETE FROM signin_tasks WHERE id IN (?)', [taskIds]);
+        }
+        await conn.query('DELETE FROM leave_requests WHERE course_id IN (?)', [courseIds]);
+        await conn.query('DELETE FROM enrollments WHERE course_id IN (?)', [courseIds]);
+        await conn.query('DELETE FROM courses WHERE id IN (?)', [courseIds]);
+      }
+    }
+    // 作为学生留下的数据
+    await conn.query('DELETE FROM signin_records WHERE student_id=?', [uid]);
+    await conn.query('DELETE FROM appeals WHERE student_id=?', [uid]);
+    await conn.query('DELETE FROM leave_requests WHERE student_id=?', [uid]);
+    await conn.query('DELETE FROM enrollments WHERE student_id=?', [uid]);
+    await conn.query('DELETE FROM users WHERE id=?', [uid]);
+    await conn.commit();
+    res.json({ ok: true, deleted: u });
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
+  }
 });
 
 // 统一错误处理

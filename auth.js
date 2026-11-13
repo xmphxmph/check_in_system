@@ -15,11 +15,13 @@ function auth(req, res, next) {
   }
 }
 
-// 角色守卫:requireRole('teacher') 只允许教师访问
+// 角色守卫:requireRole('teacher')。
+// 管理员是"教师超集":任何 teacher 路由都对管理员开放;学生路由不开放。
 function requireRole(role) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ code: 401, message: '未登录,请先登录' });
-    if (req.user.role !== role) return res.status(403).json({ code: 403, message: '无权限执行该操作' });
+    const ok = req.user.role === role || (role === 'teacher' && req.user.role === 'admin');
+    if (!ok) return res.status(403).json({ code: 403, message: '无权限执行该操作' });
     next();
   };
 }

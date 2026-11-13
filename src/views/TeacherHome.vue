@@ -1,8 +1,8 @@
 <script setup>
 // 教师端:侧边栏 + 顶栏布局,首页/课程/审批中心/个人中心
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { HomeFilled, Collection, Tickets, User, SwitchButton, Plus, ArrowRight, CopyDocument } from '@element-plus/icons-vue';
+import { HomeFilled, Collection, Tickets, User, UserFilled, SwitchButton, Plus, ArrowRight, CopyDocument, Delete } from '@element-plus/icons-vue';
 import CreateTaskPage from './CreateTaskPage.vue';
 import TaskManagePage from './TaskManagePage.vue';
 import ApprovalDetailPage from './ApprovalDetailPage.vue';
@@ -45,7 +45,37 @@ const today = computed(() => {
   const w = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} 星期${w}`;
 });
-const navTitle = computed(() => ({ home: '首页', courses: '我的课程', approvals: '审批中心', me: '个人中心' })[activeTab.value]);
+const isAdmin = computed(() => props.user.role === 'admin');
+const navTitle = computed(() => ({ home: '首页', courses: isAdmin.value ? '全部课程' : '我的课程', approvals: '审批中心', users: '用户管理', me: '个人中心' })[activeTab.value]);
+
+// ===== 管理员:用户管理 =====
+const users = ref([]);
+const usersLoading = ref(false);
+
+async function loadUsers() {
+  usersLoading.value = true;
+  try { users.value = (await api('GET', '/admin/users')).users; }
+  catch (e) { toast(e.message); }
+  finally { usersLoading.value = false; }
+}
+
+async function removeUser(row) {
+  try {
+    await ElMessageBox.confirm(
+      `将删除「${row.name}(${row.account})」及其名下所有课程、签到记录和申请,且无法恢复。`,
+      '删除账号?',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
+    );
+  } catch { return; }
+  try {
+    await api('DELETE', '/admin/users/' + row.id);
+    ElMessage.success('已删除 ' + row.account);
+    await loadUsers();
+    await loadAll();
+  } catch (e) { toast(e.message); }
+}
+
+watch(activeTab, (v) => { if (v === 'users') loadUsers(); });
 
 // 数据加载
 async function loadAll() { await Promise.all([loadCourses(), loadApprovals()]); }
@@ -113,17 +143,18 @@ onMounted(() => loadAll());
       <div class="brand"><span class="brand-mark">⏰</span> 早八签到</div>
       <el-menu :default-active="activeTab" @select="(k) => (activeTab = k)">
         <el-menu-item index="home"><el-icon><HomeFilled /></el-icon><span>首页</span></el-menu-item>
-        <el-menu-item index="courses"><el-icon><Collection /></el-icon><span>我的课程</span></el-menu-item>
+        <el-menu-item index="courses"><el-icon><Collection /></el-icon><span>{{ isAdmin ? '全部课程' : '我的课程' }}</span></el-menu-item>
         <el-menu-item index="approvals">
           <el-icon><Tickets /></el-icon>
           <span>审批中心</span>
           <el-badge v-if="pendingList.length" :value="pendingList.length" type="danger" style="margin-left:8px;" />
         </el-menu-item>
+        <el-menu-item v-if="isAdmin" index="users"><el-icon><UserFilled /></el-icon><span>用户管理</span></el-menu-item>
         <el-menu-item index="me"><el-icon><User /></el-icon><span>个人中心</span></el-menu-item>
       </el-menu>
       <div class="sidebar-user">
         <div class="avatar">{{ user.name[0] }}</div>
-        <div class="who"><b>{{ user.name }}</b><span>教师 · {{ user.account }}</span></div>
+        <div class="who"><b>{{ user.name }}</b><span>{{ isAdmin ? '管理员' : '教师' }} · {{ user.account }}</span></div>
         <el-tooltip content="退出登录" placement="top">
           <el-button link :icon="SwitchButton" @click="emit('logout')" />
         </el-tooltip>
@@ -166,7 +197,7 @@ onMounted(() => loadAll());
             </div>
 
             <div class="section-title">
-              我的课程
+              {{ isAdmin ? '全部课程' : '我的课程' }}
               <el-button link type="primary" @click="activeTab = 'courses'">课程管理</el-button>
             </div>
             <el-row :gutter="16">
@@ -174,7 +205,9 @@ onMounted(() => loadAll());
                 <div class="course-card" style="margin-bottom:16px;" @click="openCourseDetail(c)">
                   <div>
                     <div class="course-name">{{ c.name }}</div>
-                    <div class="muted" style="margin-top:4px;">邀请码 {{ c.invite_code }} · {{ c.student_count }} 人</div>
+                    <div class="muted" style="margin-top:4px;">
+                      <template v-if="isAdmin">{{ c.teacher_name }} · </template>邀请码 {{ c.invite_code }} · {{ c.student_count }} 人
+                    </div>
                   </div>
                   <el-icon color="#b6bec9"><ArrowRight /></el-icon>
                 </div>
@@ -185,12 +218,13 @@ onMounted(() => loadAll());
           <!-- 课程 -->
           <template v-else-if="activeTab === 'courses'">
             <div class="section-title">
-              我的课程({{ myCourses.length }})
+              {{ isAdmin ? '全部课程' : '我的课程' }}({{ myCourses.length }})
               <el-button type="primary" :icon="Plus" @click="showCreateCourse = true">创建课程</el-button>
             </div>
             <el-empty v-if="!myCourses.length" description="还没有创建任何课程" :image-size="110" />
             <el-table v-else :data="myCourses" border stripe>
               <el-table-column prop="name" label="课程名称" min-width="180" />
+              <el-table-column v-if="isAdmin" prop="teacher_name" label="任课教师" width="130" />
               <el-table-column prop="invite_code" label="邀请码" width="140">
                 <template #default="{ row }"><b style="letter-spacing:2px;">{{ row.invite_code }}</b></template>
               </el-table-column>
@@ -264,6 +298,45 @@ onMounted(() => loadAll());
             </el-tabs>
           </template>
 
+          <!-- 用户管理(仅管理员) -->
+          <template v-else-if="activeTab === 'users' && isAdmin">
+            <div class="section-title">
+              全部账号({{ users.length }})
+              <el-button :icon="UserFilled" @click="loadUsers">刷新</el-button>
+            </div>
+            <el-table v-loading="usersLoading" :data="users" border stripe>
+              <el-table-column prop="account" label="账号" width="150" />
+              <el-table-column prop="name" label="姓名" width="140" />
+              <el-table-column label="角色" width="110">
+                <template #default="{ row }">
+                  <el-tag :type="row.role === 'admin' ? 'danger' : row.role === 'teacher' ? 'warning' : 'info'" effect="light">
+                    {{ row.role === 'admin' ? '管理员' : row.role === 'teacher' ? '教师' : '学生' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="课程 / 选课" width="150" align="center">
+                <template #default="{ row }">{{ row.role === 'teacher' ? row.course_count + ' 门' : row.enroll_count + ' 门' }}</template>
+              </el-table-column>
+              <el-table-column prop="sign_count" label="签到记录" width="110" align="center" />
+              <el-table-column label="创建时间" width="150">
+                <template #default="{ row }">{{ fmtTime(row.created_at) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="110" fixed="right">
+                <template #default="{ row }">
+                  <el-button
+                    v-if="row.role !== 'admin'"
+                    link type="danger" :icon="Delete"
+                    @click="removeUser(row)"
+                  >删除</el-button>
+                  <span v-else class="muted">—</span>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="muted" style="margin-top:12px;">
+              管理员账号不在此处删除,只能通过 <code>npm run create-admin</code> 创建或提权。
+            </div>
+          </template>
+
           <!-- 个人中心 -->
           <template v-else>
             <div class="profile-card">
@@ -271,13 +344,13 @@ onMounted(() => loadAll());
                 <div class="profile-avatar">{{ user.name[0] }}</div>
                 <div>
                   <div class="profile-name">{{ user.name }}</div>
-                  <div class="muted">{{ user.account }} · 教师</div>
+                  <div class="muted">{{ user.account }} · {{ isAdmin ? '管理员' : '教师' }}</div>
                 </div>
               </div>
               <el-descriptions :column="2" border style="margin-top:24px;">
                 <el-descriptions-item label="账号">{{ user.account }}</el-descriptions-item>
-                <el-descriptions-item label="身份">教师</el-descriptions-item>
-                <el-descriptions-item label="创建课程">{{ myCourses.length }} 门</el-descriptions-item>
+                <el-descriptions-item label="身份">{{ isAdmin ? '管理员(拥有教师权限)' : '教师' }}</el-descriptions-item>
+                <el-descriptions-item :label="isAdmin ? '课程总数' : '创建课程'">{{ myCourses.length }} 门</el-descriptions-item>
                 <el-descriptions-item label="待审批">{{ pendingList.length }} 条</el-descriptions-item>
               </el-descriptions>
               <el-button type="danger" plain style="margin-top:24px;" @click="emit('logout')">退出登录</el-button>

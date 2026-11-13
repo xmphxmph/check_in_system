@@ -19,6 +19,8 @@ async function seed() {
   for (let i = 1; i <= 10; i++) {
     await db.q('INSERT INTO users (account,name,role,password_hash) VALUES (?,?,?,?)', [`s00${i}`, `学生${i}号`, 'student', pwd]);
   }
+  // 管理员:不开放注册,由本脚本直接创建(密码 admin123)
+  await db.q('INSERT INTO users (account,name,role,password_hash) VALUES (?,?,?,?)', ['admin', '系统管理员', 'admin', bcrypt.hashSync('admin123', 10)]);
 
   // 课程:1 高数 2 线代 3 数据结构
   const c1 = await db.q('INSERT INTO courses (name,teacher_id,invite_code) VALUES (?,?,?)', ['高等数学', 1, utils.genInviteCode()]);
@@ -63,6 +65,7 @@ async function seed() {
 
   console.log('种子数据完成');
   console.log('教师 t001 / 123456,学生 s001-s010 / 123456');
+  console.log('管理员 admin / admin123(注册页不开放管理员)');
   console.log('课程1 邀请码:', (await db.q1('SELECT invite_code FROM courses WHERE id=1')).invite_code);
   process.exit(0);
 }
